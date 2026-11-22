@@ -1,6 +1,6 @@
 name: Build VoidLink IPA
 
-# 放到你自己 fork 的 .github/workflows/build.yml（放在 Integration 分支上）
+# 放到你自己 fork 的 .github/workflows/build.yml（Integration 分支）
 on:
   workflow_dispatch:
   push:
@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     name: Build VoidLink IPA
-    runs-on: macos-26          # 需要 Xcode 26；如该镜像不可用可改 macos-latest
+    runs-on: macos-26          # 需要 Xcode 26；不可用时改 macos-latest
     timeout-minutes: 90
 
     steps:
@@ -24,30 +24,82 @@ jobs:
           xcodebuild -version
           sw_vers
 
+      - name: 补齐共享 scheme
+        run: |
+          set -euo pipefail
+          DIR="VoidLink.xcodeproj/xcshareddata/xcschemes"
+          if ls "$DIR"/*.xcscheme >/dev/null 2>&1; then
+            echo "已有共享 scheme:"
+            ls "$DIR"
+            exit 0
+          fi
+          mkdir -p "$DIR"
+          cat > "$DIR/VoidLink.xcscheme" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Scheme LastUpgradeVersion = "2620" version = "1.7">
+             <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
+                <BuildActionEntries>
+                   <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES" buildForProfiling = "YES" buildForArchiving = "YES" buildForAnalyzing = "YES">
+                      <BuildableReference
+                         BuildableIdentifier = "primary"
+                         BlueprintIdentifier = "FB290CED19B2C406004C83CF"
+                         BuildableName = "VoidLink.app"
+                         BlueprintName = "VoidLink"
+                         ReferencedContainer = "container:VoidLink.xcodeproj">
+                      </BuildableReference>
+                   </BuildActionEntry>
+                </BuildActionEntries>
+             </BuildAction>
+             <TestAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv = "YES">
+                <Testables>
+                </Testables>
+             </TestAction>
+             <LaunchAction buildConfiguration = "Debug" selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB" launchStyle = "0" useCustomWorkingDirectory = "NO" ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES" debugServiceExtension = "internal" allowLocationSimulation = "YES">
+                <BuildableProductRunnable runnableDebuggingMode = "0">
+                   <BuildableReference
+                      BuildableIdentifier = "primary"
+                      BlueprintIdentifier = "FB290CED19B2C406004C83CF"
+                      BuildableName = "VoidLink.app"
+                      BlueprintName = "VoidLink"
+                      ReferencedContainer = "container:VoidLink.xcodeproj">
+                   </BuildableReference>
+                </BuildableProductRunnable>
+             </LaunchAction>
+             <ProfileAction buildConfiguration = "Debug" shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = "" useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES">
+                <BuildableProductRunnable runnableDebuggingMode = "0">
+                   <BuildableReference
+                      BuildableIdentifier = "primary"
+                      BlueprintIdentifier = "FB290CED19B2C406004C83CF"
+                      BuildableName = "VoidLink.app"
+                      BlueprintName = "VoidLink"
+                      ReferencedContainer = "container:VoidLink.xcodeproj">
+                   </BuildableReference>
+                </BuildableProductRunnable>
+             </ProfileAction>
+             <AnalyzeAction buildConfiguration = "Debug">
+             </AnalyzeAction>
+             <ArchiveAction buildConfiguration = "Debug" revealArchiveInOrganizer = "YES">
+             </ArchiveAction>
+          </Scheme>
+          EOF
+
+      - name: 解析 Swift Package 依赖
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies -project VoidLink.xcodeproj -scheme VoidLink
+
       - name: 构建 VoidLink (未签名)
         run: |
           set -euo pipefail
+          xcodebuild -verbose -project VoidLink.xcodeproj -scheme VoidLink \
+            -sdk iphoneos -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            -archivePath "$PWD/build/VoidLink.xcarchive" archive \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED="NO" \
+            CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
 
-          # 项目没有提交共享 scheme，优先用 target 构建；若有共享 scheme 则走 archive
-          if ls VoidLink.xcodeproj/xcshareddata/xcschemes/*.xcscheme >/dev/null 2>&1; then
-            echo "== 使用 scheme archive =="
-            xcodebuild -verbose -project VoidLink.xcodeproj -scheme VoidLink \
-              -sdk iphoneos -configuration Debug \
-              -destination 'generic/platform=iOS' \
-              -archivePath "$PWD/build/VoidLink.xcarchive" archive \
-              CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED="NO" \
-              CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
-            APP="$PWD/build/VoidLink.xcarchive/Products/Applications/VoidLink.app"
-          else
-            echo "== 使用 target 构建 =="
-            xcodebuild -verbose -project VoidLink.xcodeproj -target VoidLink \
-              -sdk iphoneos -configuration Debug build \
-              CONFIGURATION_BUILD_DIR="$PWD/build/Products" \
-              CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED="NO" \
-              CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
-            APP="$PWD/build/Products/VoidLink.app"
-          fi
-
+          APP="$PWD/build/VoidLink.xcarchive/Products/Applications/VoidLink.app"
           test -d "$APP"
           mkdir -p build/IPA/Payload
           cp -R "$APP" build/IPA/Payload/
