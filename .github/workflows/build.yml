@@ -1,30 +1,65 @@
 name: Build VoidLink IPA
 
+# 放到你自己 fork 的 .github/workflows/build.yml（放在 Integration 分支上）
 on:
+  workflow_dispatch:
   push:
-    branches: [ "feat/frame_pacing_metal" ]
+    branches: [ "Integration" ]
 
 jobs:
   build:
     name: Build VoidLink IPA
-    runs-on: macos-latest
+    runs-on: macos-26          # 需要 Xcode 26；如该镜像不可用可改 macos-latest
+    timeout-minutes: 90
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+      - name: Checkout (含子模块)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
 
-      - name: Checkout submodules
-        run: "git submodule update --init --recursive"
-
-      - name: Build VoidLink
+      - name: 环境信息
         run: |
-          xcodebuild -verbose -scheme VoidLink -sdk iphoneos -configuration Debug archive -archivePath $PWD/build/VoidLink.xcarchive CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED="NO" CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
-          mkdir -p ./build/IPA && mkdir -p ./build/IPA/Payload
-          cp -r ./build/VoidLink.xcarchive/Products/Applications/VoidLink.app ./build/IPA/Payload/VoidLink.app
-          cd ./build/IPA && zip -r ../../build/VoidLink.ipa ./Payload/* && cd ../..
+          xcodebuild -version
+          sw_vers
 
-      - name: Upload VoidLink IPA to Artifacts
+      - name: 构建 VoidLink (未签名)
+        run: |
+          set -euo pipefail
+
+          # 项目没有提交共享 scheme，优先用 target 构建；若有共享 scheme 则走 archive
+          if ls VoidLink.xcodeproj/xcshareddata/xcschemes/*.xcscheme >/dev/null 2>&1; then
+            echo "== 使用 scheme archive =="
+            xcodebuild -verbose -project VoidLink.xcodeproj -scheme VoidLink \
+              -sdk iphoneos -configuration Debug \
+              -destination 'generic/platform=iOS' \
+              -archivePath "$PWD/build/VoidLink.xcarchive" archive \
+              CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED="NO" \
+              CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
+            APP="$PWD/build/VoidLink.xcarchive/Products/Applications/VoidLink.app"
+          else
+            echo "== 使用 target 构建 =="
+            xcodebuild -verbose -project VoidLink.xcodeproj -target VoidLink \
+              -sdk iphoneos -configuration Debug build \
+              CONFIGURATION_BUILD_DIR="$PWD/build/Products" \
+              CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED="NO" \
+              CODE_SIGN_ENTITLEMENTS="" CODE_SIGNING_ALLOWED="NO"
+            APP="$PWD/build/Products/VoidLink.app"
+          fi
+
+          test -d "$APP"
+          mkdir -p build/IPA/Payload
+          cp -R "$APP" build/IPA/Payload/
+          cd build/IPA
+          zip -ry ../../build/VoidLink-unsigned.ipa Payload
+          cd ../..
+          ls -lh build/VoidLink-unsigned.ipa
+
+      - name: 上传 IPA
         uses: actions/upload-artifact@v4
         with:
-          name: VoidLink.ipa
-          path: build/VoidLink.ipa
+          name: VoidLink-unsigned-ipa
+          path: build/VoidLink-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
