@@ -3,6 +3,12 @@ name: Build VoidLink IPA
 # 放到你自己 fork 的 .github/workflows/build.yml（Integration 分支）
 on:
   workflow_dispatch:
+    inputs:
+      configuration:
+        description: "构建配置"
+        type: choice
+        options: [ Release, Debug ]
+        default: Release
   push:
     branches: [ "Integration" ]
 
@@ -11,6 +17,9 @@ jobs:
     name: Build VoidLink IPA
     runs-on: macos-26          # 需要 Xcode 26；不可用时改 macos-latest
     timeout-minutes: 90
+    env:
+      # 手动触发用输入值，push 触发默认 Release
+      CONFIG: ${{ inputs.configuration || 'Release' }}
 
     steps:
       - name: Checkout (含子模块)
@@ -91,8 +100,9 @@ jobs:
       - name: 构建 VoidLink (未签名)
         run: |
           set -euo pipefail
+          echo "构建配置: $CONFIG"
           xcodebuild -verbose -project VoidLink.xcodeproj -scheme VoidLink \
-            -sdk iphoneos -configuration Debug \
+            -sdk iphoneos -configuration "$CONFIG" \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$PWD/build/DerivedData" \
             -archivePath "$PWD/build/VoidLink.xcarchive" archive \
@@ -104,14 +114,14 @@ jobs:
           mkdir -p build/IPA/Payload
           cp -R "$APP" build/IPA/Payload/
           cd build/IPA
-          zip -ry ../../build/VoidLink-unsigned.ipa Payload
+          zip -ry "../../build/VoidLink-$CONFIG-unsigned.ipa" Payload
           cd ../..
-          ls -lh build/VoidLink-unsigned.ipa
+          ls -lh "build/VoidLink-$CONFIG-unsigned.ipa"
 
       - name: 上传 IPA
         uses: actions/upload-artifact@v4
         with:
-          name: VoidLink-unsigned-ipa
-          path: build/VoidLink-unsigned.ipa
+          name: VoidLink-${{ env.CONFIG }}-unsigned-ipa
+          path: build/VoidLink-${{ env.CONFIG }}-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
